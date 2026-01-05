@@ -2,6 +2,7 @@ import asyncio
 import logging
 from idlelib.window import add_windows_to_menu #я это не добавляла, оно само
 
+
 import aiogram
 from aiogram import Bot, Dispatcher
 from aiogram.types import Message, CallbackQuery
@@ -36,6 +37,13 @@ async def delete_last_message(last_msg_id: int, message: Message):
             )
         except aiogram.exceptions.TelegramBadRequest as tbr:
             print("При удалении несуществующего сообщения произошла ошибка!")
+
+#удаление предыдущих сообщений с проверкой
+async def safe_delete(message: Message):
+    try:
+        await message.delete()
+    except aiogram.exceptions.TelegramBadRequest:
+        pass
 
 #--МЕНЮ--
 def main_menu_keyboard():
@@ -78,11 +86,10 @@ class AddTask(StatesGroup):
 
 @main_router.callback_query(F.data == "add") #обработчик кнопки
 async def add_task(call: CallbackQuery, state: FSMContext):
-    await call.message.delete()
-
+    await safe_delete(call.message)
     await state.update_data()  # создаем хранилище, хранит шаг и файл
     bot_msg = await call.message.answer("Напишите название задачи:") #у call обратиться к сообщению и записали туда текст
-    await call.answer() #а тут отпрваляем измененное сообщение обратно
+    await call.answer() #а тут отправляем измененное сообщение обратно
     await state.update_data(last_msg_id=bot_msg.message_id) #сохраняем айди сообщения
     await state.set_state(AddTask.name) #задает начало цепочки(откуда стартовать)
 
@@ -195,7 +202,7 @@ async def notification_task(call: CallbackQuery, state: FSMContext):
 #-КЛАВИАТУРЫ-
 
 # клавиатура даты
-def get_date_keyboard():
+def get_date_keyboard(): #тут сделать надо смену месяцев!
     kb = InlineKeyboardBuilder()
     kb.button(text="<", callback_data="prev_month")
     kb.button(text="Декабрь 2025", callback_data="current_month")
@@ -251,11 +258,11 @@ def get_period_keyboard():
 # клавиатура уведомления
 def get_notification_keyboard(): # гпт советует использовать CallbackData, но я не поняла
     kb = InlineKeyboardBuilder()
-    kb.button(text="10 минут", callback_data="notification_10")
-    kb.button(text="30 минут", callback_data="notification_30")
-    kb.button(text="1 час", callback_data="notification_60")
-    kb.button(text="2 часа", callback_data="notification_120")
-    kb.button(text="Не напоминать", callback_data="no_notification")
+    kb.button(text="🔔 10 минут", callback_data="notification_10")
+    kb.button(text="⏳ 30 минут", callback_data="notification_30")
+    kb.button(text="🕐 1 час", callback_data="notification_60")
+    kb.button(text="🕒 2 часа", callback_data="notification_120")
+    kb.button(text="🚫 Не напоминать", callback_data="no_notification")
     kb.adjust(2, 2, 1)
     return kb.as_markup()
 
@@ -273,7 +280,6 @@ async def get_name(message: Message, state: FSMContext): #название за�
     await state.update_data(name=name, last_msg_id=bot_msg.message_id)  # обновить значение(как ключ:значение) и сохранить
     await state.set_state(AddTask.date)
 
-
 # добавляем дату
 @main_router.message(AddTask.date)
 async def get_date(message: Message, state: FSMContext):
@@ -284,7 +290,6 @@ async def get_date(message: Message, state: FSMContext):
     await delete_last_message(last_msg_id, message)
     await state.update_data(date=date, last_msg_id=bot_msg.message_id)
     await state.set_state(AddTask.time) #перенести в клаву
-
 
 # добавляем время
 @main_router.message(AddTask.time)
@@ -322,9 +327,9 @@ async def get_notification(message: Message, state: FSMContext):
 
 
 #--УДАЛЕНИЕ--
-@main_router.callback_query(F.data == "delete")
+@main_router.callback_query(F.data == "delete") #делаем клавиатуру состоящую из всех уже сохраненных задач(кол-во кнопок зависит от этого)
 async def delete_task(call: CallbackQuery):
-    await call.message.delete()
+    await safe_delete(call.message)
     await call.message.answer("Вы нажали на удалить")
     await call.message.answer("Выберите действие:", reply_markup=main_menu_keyboard())
     await call.answer()
@@ -335,7 +340,7 @@ async def delete_task(call: CallbackQuery):
 #--ВЫВОД СПИСКА--
 @main_router.callback_query(F.data == "output")
 async def output_task(call: CallbackQuery):
-    await call.message.delete()
+    await safe_delete(call.message)
     if len(tasks) == 0:
         await call.message.answer("🙁 Список пуст!")
         await call.message.answer("Выберите действие:", reply_markup=main_menu_keyboard())
@@ -353,16 +358,22 @@ async def output_task(call: CallbackQuery):
 
 
 #--ИЗМЕНЕНИЕ--
-@main_router.callback_query(F.data == "change")
+@main_router.callback_query(F.data == "change") #делаем клавиатуру состоящую из всех уже сохраненных задач(кол-во кнопок зависит от этого)
 async def output_task(call: CallbackQuery):
-    await call.message.delete()
+    await safe_delete(call.message)
     await call.message.answer("Вы нажали на изменение списка")
     await call.message.answer("Выберите действие:", reply_markup=main_menu_keyboard())
     await call.answer()
 
 
 #--ОЧИЩЕНИЕ--
+@main_router.callback_query(F.data == "clear")
+async def output_task(call: CallbackQuery):
+    await safe_delete(call.message)
+    await call.message.answer("⚠️ Вы уверены, что хотите удалить ВСЕ задачи?", reply_markup=confirm_clear_keyboard())
+    await call.answer()
 
+#-КЛАВИАТУРА-
 # клавиатура подтверждения
 def confirm_clear_keyboard():
     kb = InlineKeyboardBuilder()
@@ -371,16 +382,12 @@ def confirm_clear_keyboard():
     kb.adjust(2)
     return kb.as_markup()
 
-@main_router.callback_query(F.data == "clear")
-async def output_task(call: CallbackQuery):
-    await call.message.delete()
-    await call.message.answer("⚠️ Вы уверены, что хотите удалить ВСЕ задачи?", reply_markup=confirm_clear_keyboard())
-    await call.answer()
+#-ФУНКЦИИ КЛАВИАТУРЫ-
 
 # очистить список
 @main_router.callback_query(F.data == "clear_yes")
 async def confirm_clear(call: CallbackQuery):
-    await call.message.delete()
+    await safe_delete(call.message)
     tasks.clear()
     await call.message.answer("🗑️ Все задачи удалены")
     await call.message.answer("Выберите действие:", reply_markup=main_menu_keyboard())
@@ -389,22 +396,112 @@ async def confirm_clear(call: CallbackQuery):
 # очистка списка отменена
 @main_router.callback_query(F.data == "clear_no")
 async def cancel_clear(call: CallbackQuery):
-    await call.message.delete()
+    await safe_delete(call.message)
     await call.message.answer("❎ Очистка отменена")
     await call.message.answer("Выберите действие:", reply_markup=main_menu_keyboard())
     await call.answer()
 
 
 #--НАСТРОЙКИ--
-@main_router.callback_query(F.data == "settings")
+@main_router.callback_query(F.data == "settings") #сортировка (по дате и времени, по названию), часовой пояс
 async def output_task(call: CallbackQuery):
-    await call.message.delete()
-    await call.message.answer("Вы нажали на настройки")
+    await safe_delete(call.message)
+    await call.message.answer("Выберите действие:", reply_markup=settings_menu_keyboard())
+    await call.answer()
+
+#-КЛАВИАТУРЫ-
+
+# клавиатура настроек
+def settings_menu_keyboard():
+    kb = InlineKeyboardBuilder()
+    kb.button(text="📁 Сортировка", callback_data="sorting")
+    kb.button(text="🕰️ Часовой пояс", callback_data="timezone")
+    kb.button(text="⬅️ Назад", callback_data="cancel_setting")
+    kb.adjust(2, 1)
+    return kb.as_markup()
+
+#клавиатура видов сортировки
+def sorting_keyboard():
+    kb = InlineKeyboardBuilder()
+    kb.button(text="🔤 По названию", callback_data="sort_name")
+    kb.button(text="📅 По дате", callback_data="sort_date")
+    kb.button(text="⏰ По времени", callback_data="sort_time")
+    kb.button(text="⬅️ Назад", callback_data="cancel_setting")
+    kb.adjust(2, 2)
+    return kb.as_markup()
+
+#клавиатура выбора часового пояса
+def time_zone_keyboard():
+    kb = InlineKeyboardBuilder()
+    for number in ["-2", "-1", "+0", "+1", "+2", "+3", "+4", "+5", "+6", "+7", "+8", "+9", "+10"]:
+        kb.button(text=f"🌍 UTC{number}", callback_data=f"utc{number}")
+    kb.button(text="⬅️ Назад", callback_data="cancel_setting")
+    kb.adjust(3, 3, 3, 3, 2)
+    return kb.as_markup()
+
+#-ФУНКЦИИ КЛАВИАТУРЫ-
+
+#сортировка по названию
+@main_router.callback_query(F.data == "sort_name")
+async def sort_name(call: CallbackQuery):
+    await safe_delete(call.message)
+
+    #сделать постоянную сортировку
+
+    await call.message.answer("Теперь ваш список сортируется по названию!")
+    await call.message.answer("Выберите действие:", reply_markup=main_menu_keyboard())
+    await call.answer()
+
+#сортировка по дате
+@main_router.callback_query(F.data == "sort_date")
+async def sort_date(call: CallbackQuery):
+    await safe_delete(call.message)
+
+    # сделать постоянную сортировку
+
+    await call.message.answer("Теперь ваш список сортируется по дате!")
+    await call.message.answer("Выберите действие:", reply_markup=main_menu_keyboard())
+    await call.answer()
+
+#сортировка по времени
+@main_router.callback_query(F.data == "sort_time")
+async def sort_time(call: CallbackQuery):
+    await safe_delete(call.message)
+
+    # сделать постоянную сортировку
+
+    await call.message.answer("Теперь ваш список сортируется по времени!")
+    await call.message.answer("Выберите действие:", reply_markup=main_menu_keyboard())
+    await call.answer()
+
+#выбор часового пояса
+@main_router.callback_query(F.data.startswith ("utc")) #тут доделать
+async def utc_selection(call: CallbackQuery):
+    pass
+
+#-СОРТИРОВКА-
+@main_router.callback_query(F.data == "sorting")
+async def sorting(call: CallbackQuery):
+    await safe_delete(call.message)
+    await call.message.answer("Выберите способ сортировки:", reply_markup=sorting_keyboard())
+    await call.answer()
+
+#-ЧАСОВОЙ ПОЯС-
+@main_router.callback_query(F.data == "timezone")
+async def time_zone(call: CallbackQuery):
+    await safe_delete(call.message)
+    await call.message.answer("Выберите ваш часовой пояс:", reply_markup=time_zone_keyboard())
+
+#-ВЕРНУТЬСЯ НАЗАД-
+@main_router.callback_query(F.data == "cancel_setting")
+async def cancel_setting(call: CallbackQuery):
+    await safe_delete(call.message)
+    await call.answer("Возвращаемся назад...")
     await call.message.answer("Выберите действие:", reply_markup=main_menu_keyboard())
     await call.answer()
 
 
-
+#--ЗАПУСК БОТА--
 async def main():
     await set_bot_commands(bot) #задает команды для бота
     await dp.start_polling(bot) #обращается к серверу тг и проверяет на новые сообщения
